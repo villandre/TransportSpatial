@@ -1,6 +1,3 @@
-library(sp)
-library(raster)
-
 identifyClosestPoints <- function(coorVector, coorMatrix, numNeighbours)
 {
   distFromPoint <- apply(coorMatrix, MARGIN = 1, FUN = function(x)
@@ -15,7 +12,7 @@ makeCircularPolygon <- function(numPointsCircle, centerCoor, radius)
   posDomain <- seq(from = 0, to = 2*pi, length.out = numPointsCircle)
   xCoor <- radius*cos(posDomain) + centerCoor[[1]]
   yCoor <- radius*sin(posDomain) + centerCoor[[2]]
-  simplePolygon <- Polygon(cbind(xCoor, yCoor), hole = FALSE)
+  simplePolygon <- sp::Polygon(cbind(xCoor, yCoor), hole = FALSE)
   simplePolygon
 }
 
@@ -38,7 +35,7 @@ plotCircle <- function(LonDec, LatDec, Km, plotIt = TRUE) {#Corrected function
     }
     coordTable <- cbind(Lon2Deg,Lat2Deg)
     coordTable <- rbind(coordTable, head(coordTable, 1)) ## To close the circle...
-    Polygon(coords = cbind(Lon2Deg,Lat2Deg), hole = FALSE)
+    sp::Polygon(coords = cbind(Lon2Deg,Lat2Deg), hole = FALSE)
 }
 
 ## From Hadley Wickham's Advanced R. The result of this infix function is returning a default value when a function evaluates to NULL.
@@ -51,13 +48,13 @@ coo2sp <- function(coo) {
   n <- nrow(coo)
   if (any(coo[1,]!=coo[n,]))
   coo <- coo[c(1:n,1),]
-  SpatialPolygons(list(Polygons(list(Polygon(coo)), '0')))
+  sp::SpatialPolygons(list(sp::Polygons(list(sp::Polygon(coo)), '0')))
 }
 
 getPointsInPolygon <- function(pointCoordinatesMatrix, polygonMatrix) {
-  pointsInSpatial <- SpatialPoints(pointCoordinatesMatrix)
+  pointsInSpatial <- sp::SpatialPoints(pointCoordinatesMatrix)
   polygonInSpatial <- coo2sp(polygonMatrix)
-  pointInIntersection <- intersect(pointsInSpatial, polygonInSpatial)
+  pointInIntersection <- raster::intersect(pointsInSpatial, polygonInSpatial)
   intersectAsMatrix <- pointInIntersection@coords
   colnames(intersectAsMatrix) <- colnames(pointCoordinatesMatrix)
   intersectAsMatrix
@@ -66,49 +63,43 @@ getPointsInPolygon <- function(pointCoordinatesMatrix, polygonMatrix) {
 populateRaster <- function(rasterObject, coordsMat, valuesVec, radiusInKm, categFun = min, continuousFun = mean) {
   circlesPolygonsList <- lapply(1:nrow(coordsMat), function(lineNum) {
     aPolygon <- plotCircle(LonDec = coordsMat[lineNum, "lon"], LatDec = coordsMat[lineNum, "lat"], Km = radiusInKm, plotIt = FALSE)
-    Polygons(srl = list(aPolygon), ID = as.character(lineNum))
+    sp::Polygons(srl = list(aPolygon), ID = as.character(lineNum))
   })
-  circlesPolygons <- SpatialPolygons(Srl = circlesPolygonsList)
+  circlesPolygons <- sp::SpatialPolygons(Srl = circlesPolygonsList)
   funToUse <- continuousFun
   if ("factor" %in% class(valuesVec)) {
     funToUse <- categFun
   }
-  newRaster <- rasterize(x = circlesPolygons, y = rasterObject, field = as.numeric(valuesVec), fun = funToUse, update = TRUE, updateValue = "NA")
+  newRaster <- raster::rasterize(x = circlesPolygons, y = rasterObject, field = as.numeric(valuesVec), fun = funToUse, update = TRUE, updateValue = "NA")
   newRaster
 }
 
 covariateImputeKriging <- function(pointCoordinatesMatrix, covValues, pointsToImpute, maxdist = Inf, nmin = 0, nmax = Inf, useIDW = FALSE, idp = 2, returnCovar = FALSE) {
-  require(gstat)
   colnames(pointCoordinatesMatrix) <- c("x","y")
   covFrameWithCoor <- as.data.frame(cbind(covariate = covValues, pointCoordinatesMatrix))
-  coordinates(covFrameWithCoor) <- ~x+y
+  sp::coordinates(covFrameWithCoor) <- ~x+y
 
   covFrameWithCoor@data$covariate <- covValues - mean(covValues) # Do we really need to centralize values?
 
-  pointWithProj <- SpatialPoints(pointsToImpute)
+  pointWithProj <- sp::SpatialPoints(pointsToImpute)
   if (useIDW) {
     idwEst <- gstat::idw(covariate~1, locations = covFrameWithCoor, newdata = pointWithProj, maxdist = maxdist, nmin = nmin, nmax = nmax, idp = idp)
     return(idwEst@data$var1.pred + mean(covValues))
   }
-  lzn.vgm <- variogram(covariate~1, data = covFrameWithCoor) # calculates sample variogram values
+  lzn.vgm <- gstat::variogram(covariate~1, data = covFrameWithCoor) # calculates sample variogram values
   nuggetVal <- 0.95*min(lzn.vgm$gamma)
   psillVal <- tail(lzn.vgm$gamma, n = 1) - nuggetVal
-  lzn.fit <- fit.variogram(lzn.vgm, model=vgm(psill = psillVal, model = "Exp", nugget = nuggetVal), fit.sills = FALSE, fit.ranges = FALSE) # fit model
+  lzn.fit <- gstat::fit.variogram(lzn.vgm, model=gstat::vgm(psill = psillVal, model = "Exp", nugget = nuggetVal), fit.sills = FALSE, fit.ranges = FALSE) # fit model
   if (returnCovar) {
-    lzn.kriged.withCovar <- krige0(formula = covariate~1, data = covFrameWithCoor, newdata = pointWithProj, model=lzn.fit, beta = 0, computeVar = TRUE, fullCovariance = TRUE)
+    lzn.kriged.withCovar <- gstat::krige0(formula = covariate~1, data = covFrameWithCoor, newdata = pointWithProj, model=lzn.fit, beta = 0, computeVar = TRUE, fullCovariance = TRUE)
     return(lzn.kriged.withCovar)
   }
-  require(geoR)
-  ordiKrig <- krige.conv(geodata = list(coords = covFrameWithCoor@coords, data = covFrameWithCoor@data),locations = pointWithProj@coords, krige = krige.control(cov.pars = c(psillVal, median(lzn.vgm$dist))))
+  ordiKrig <- geoR::krige.conv(geodata = list(coords = covFrameWithCoor@coords, data = covFrameWithCoor@data),locations = pointWithProj@coords, krige = geoR::krige.control(cov.pars = c(psillVal, median(lzn.vgm$dist))))
   # lzn.kriged <- krige(covariate~1, locations = covFrameWithCoor, newdata = SpatialPoints(pointsToImpute), model=lzn.fit, maxdist = maxdist, nmin = nmin, nmax = nmax, beta = 0)
   ordiKrig@data$var1.pred + mean(covValues)
 }
 
 coordToLineID <- function(minLons, maxLons, minLats, maxLats, lonCoord, latCoord) { # minLons must have named elements.
-  # minLons <- sapply(linesList, function(x) min(x$lon))
-  # maxLons <- sapply(linesList, function(x) max(x$lon))
-  # minLats <- sapply(linesList, function(x) min(x$lat))
-  # maxLats <- sapply(linesList, function(x) max(x$lat))
 
   # We include only segments that are in range.
   compatibleLines <- which((minLons <= lonCoord) & (maxLons >= lonCoord) & (minLats <= latCoord) & (maxLats >= latCoord))
@@ -121,9 +112,9 @@ distPointToLine <- function(point, point1onLine, point2onLine) {
   abs((point2onLine[[2]] - point1onLine[[2]])*point[[1]] - (point2onLine[[1]] - point1onLine[[1]])*point[[2]] + point2onLine[[1]]*point1onLine[[2]] - point2onLine[[2]]*point1onLine[[1]])/sqrt((point2onLine[[2]] - point1onLine[[2]])^2 + (point2onLine[[1]] - point1onLine[[1]])^2)
 }
 
-getLatexTableFromLPPM <- function(lppmOutput, digits = 3) {
-  require(xtable)
-  filename <- "/tmp/lppmOut.info"
+# This function will only work by default on UNIX-based systems, since it involves creating (and deleting) a temp file in /tmp/
+
+getLatexTableFromLPPM <- function(lppmOutput, digits = 3, filename = "/tmp/lppmOut.info") {
   previousWidth <- options()$width
   options(width = 200) # We chage the print width to prevent the print output to be split on multiple lines, which screws up the formatting in the table.
   capture.output(lppmOutput, file = filename, append = FALSE)
@@ -156,10 +147,11 @@ getLatexTableFromLPPM <- function(lppmOutput, digits = 3) {
   tableRemade <- sapply(tableRemade, function(x) as.numeric(x))
   colnames(tableRemade) <- c("Estimate", "SE", "CI-low", "CI-high")
   rownames(tableRemade) <- theRownames
-  xtable(tableRemade, digits = digits)
+  xtable::xtable(tableRemade, digits = digits)
 }
 
 # The function will return the fitted intensity for a given set of covariates if length is 0. If it is greater than 0, then it will return the expected number of crashes, i.e. exp(fitted intensity * segment length)
+# The intercept term must have name "(Intercept)"
 
 fittedValueFromCoefVec <- function(coefVec, newValues, segmentLength = 0) {
   fittedValues <- sapply(setdiff(names(coefVec), "(Intercept)"), FUN = function(varName) {

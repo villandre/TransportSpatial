@@ -12,8 +12,8 @@ library(rgeos)
 library(spatstat)
 library(osmar) ## This will let us retrieve information from OpenStreetMap
 
-source("~/Projet_Transport/code/helperFunctions.R")
-source("~/Projet_Transport/code/spde-tutorial-functions.R") # Obtained from https://www.math.ntnu.no/inla/r-inla.org/tutorials/spde/R/spde-tutorial-functions.R
+source("~/Projet_Transport/code/R/helperFunctions.R")
+source("~/Projet_Transport/code/R/spde-tutorial-functions.R") # Obtained from https://www.math.ntnu.no/inla/r-inla.org/tutorials/spde/R/spde-tutorial-functions.R
 
 #-------------------------------------------------------------------------------------------------- >
 # Data import section (always run this section entirely)
